@@ -1,0 +1,152 @@
+<?php
+if (isset($_POST['inserted_id'])) {
+
+    require '../../includes/db-config.php';
+    session_start();
+
+    $inserted_id = intval($_POST['inserted_id']);
+
+    if (empty($inserted_id)) {
+        echo json_encode(['status' => 400, 'message' => 'ID is required.']);
+        exit();
+    }
+
+    // Get current step
+    $step = $conn->query("SELECT Step FROM Students WHERE ID = $inserted_id");
+    $step = mysqli_fetch_assoc($step)['Step'];
+
+    $step_query = "";
+    if ($step < 2) {
+        $step_query = ", Step = 2";
+    }
+
+    $emailQuery   = "";
+    $contactQuery = "";
+
+    if (! $_SESSION['crm']) {
+
+        $email = mysqli_real_escape_string($conn, $_POST['email']);
+        if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            echo json_encode(['status' => 400, 'message' => 'Invalid Email!']);
+            exit();
+        }
+
+        $email      = strtolower($email);
+        $emailQuery = ", Email = '$email'";
+
+        $contact = mysqli_real_escape_string($conn, $_POST['contact']);
+
+        if (strlen($contact) != 10) {
+            echo json_encode(['status' => 400, 'message' => 'Contact Number Should be 10 digit']);
+            exit();
+        }
+
+        $contactQuery = ", Contact = '$contact'";
+    }
+
+    // Duplicate contact check
+    $existContact = $conn->query("SELECT COUNT(ID) as count
+        FROM Students
+        WHERE (Contact='$contact' OR Alternate_Contact='$contact')
+        AND ID != $inserted_id")->fetch_assoc();
+
+    if ($existContact['count'] > 0) {
+        echo json_encode(['status' => 400, 'message' => 'Contact Number already Exists!']);
+        exit();
+    }
+
+    $alternate_email = mysqli_real_escape_string($conn, $_POST['alternate_email']);
+    if (! empty($alternate_email) && ! filter_var($alternate_email, FILTER_VALIDATE_EMAIL)) {
+        echo json_encode(['status' => 400, 'message' => 'Invalid Alternate Email!']);
+        exit();
+    }
+
+    $alternate_email = strtolower($alternate_email);
+
+    $alternate_contact = mysqli_real_escape_string($conn, $_POST['alternate_contact']);
+
+    // Address fields
+    $address = mysqli_real_escape_string($conn, $_POST['address']);
+    $address = strtoupper(strtolower($address));
+
+    $pincode = mysqli_real_escape_string($conn, $_POST['pincode']);
+
+    $city = mysqli_real_escape_string($conn, $_POST['city']);
+    $city = strtoupper(strtolower($city));
+
+    $district = mysqli_real_escape_string($conn, $_POST['district']);
+    $district = strtoupper(strtolower($district));
+
+    $state = mysqli_real_escape_string($conn, $_POST['state']);
+    $state = strtoupper(strtolower($state));
+
+    $address_json = json_encode([
+        'present_address'  => $address,
+        'present_pincode'  => $pincode,
+        'present_city'     => $city,
+        'present_district' => $district,
+        'present_state'    => $state,
+    ]);
+
+    // 1️⃣ Fetch old data
+    $old_query = $conn->query("SELECT Email, Contact, Alternate_Email, Alternate_Contact, Address
+                               FROM Students WHERE ID = $inserted_id");
+
+    $old_data = $old_query->fetch_assoc();
+
+    // 2️⃣ Prepare new data
+    $new_data = [
+        'Email'             => isset($email) ? $email : $old_data['Email'],
+        'Contact'           => $contact,
+        'Alternate_Email'   => $alternate_email,
+        'Alternate_Contact' => $alternate_contact,
+        'Address'           => $address_json,
+    ];
+
+    // 3️⃣ Detect changes
+    $changes_old = [];
+    $changes_new = [];
+
+    foreach ($new_data as $field => $value) {
+
+        if ($old_data[$field] != $value) {
+            $changes_old[$field] = $old_data[$field];
+            $changes_new[$field] = $value;
+        }
+
+    }
+
+    // 4️⃣ Update student
+    $update = $conn->query("UPDATE Students SET
+        Alternate_Email = '$alternate_email',
+        Alternate_Contact = '$alternate_contact',
+        Address = '$address_json'
+        $emailQuery
+        $contactQuery
+        $step_query
+        WHERE ID = $inserted_id");
+
+    if ($update) {
+
+        // 5️⃣ Save log if any change
+        if (! empty($changes_new)) {
+
+            addLog($conn, $_SESSION['university_id'],$_SESSION['ID'], 'update', 'Students', $inserted_id, 'Student Step 2 updated', json_encode($changes_old), json_encode($changes_new)
+            );
+
+        }
+        echo json_encode([
+            'status'  => 200,
+            'message' => 'Step 2 details saved successfully!',
+        ]);
+
+    } else {
+
+        echo json_encode([
+            'status'  => 400,
+            'message' => 'Something went wrong!',
+        ]);
+
+    }
+
+}
